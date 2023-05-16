@@ -18,8 +18,6 @@ func Destructure[T any](value any) T {
 	return d.Interface().(T)
 }
 
-var zeroValue = reflect.Value{}
-
 func destructure(value reflect.Value, structure reflect.Type) (reflect.Value, bool) {
 	if value.Kind() == reflect.Interface {
 		// Remove the layer of indirection for this interface value
@@ -35,81 +33,62 @@ func destructure(value reflect.Value, structure reflect.Type) (reflect.Value, bo
 		return newVal, true
 	}
 
-	ifcValue := value.Interface()
 	// Switch on the next expected kind
 	switch structure.Kind() {
 	case reflect.String:
-		v, ok := ifcValue.(string)
+		// NB: I believe that with the `AssignableTo` check this will never produce a string value
+		v, ok := value.Interface().(string)
 		return reflect.ValueOf(v), ok
 
 	case reflect.Bool:
-		v, ok := ifcValue.(bool)
+		// NB: I believe that with the `AssignableTo` check this will never produce a bool value
+		v, ok := value.Interface().(bool)
 		return reflect.ValueOf(v), ok
 
-	case reflect.Int:
-		v, ok := ifcValue.(int)
-		return reflect.ValueOf(v), ok
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if !value.CanInt() {
+			return reflect.Value{}, false
+		}
+		newInt := reflect.New(structure).Elem()
+		newInt.SetInt(value.Int())
+		return newInt, true
 
-	case reflect.Int8:
-		v, ok := ifcValue.(int8)
-		return reflect.ValueOf(v), ok
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if !value.CanUint() {
+			return reflect.Value{}, false
+		}
+		newUint := reflect.New(structure).Elem()
+		newUint.SetUint(value.Uint())
+		return newUint, true
 
-	case reflect.Int16:
-		v, ok := ifcValue.(int16)
-		return reflect.ValueOf(v), ok
+	case reflect.Float32, reflect.Float64:
+		if !value.CanFloat() {
+			return reflect.Value{}, false
+		}
+		newFloat := reflect.New(structure).Elem()
+		newFloat.SetFloat(value.Float())
+		return newFloat, true
 
-	case reflect.Int32:
-		v, ok := ifcValue.(int32)
-		return reflect.ValueOf(v), ok
+	case reflect.Complex64, reflect.Complex128:
+		if !value.CanComplex() {
+			return reflect.Value{}, false
+		}
+		newComplex := reflect.New(structure).Elem()
+		newComplex.SetComplex(value.Complex())
+		return newComplex, true
 
-	case reflect.Int64:
-		v, ok := ifcValue.(int64)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Uint:
-		v, ok := ifcValue.(uint)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Uint8:
-		v, ok := ifcValue.(uint8)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Uint16:
-		v, ok := ifcValue.(uint16)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Uint32:
-		v, ok := ifcValue.(uint32)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Uint64:
-		v, ok := ifcValue.(uint64)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Float32:
-		v, ok := ifcValue.(float32)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Float64:
-		v, ok := ifcValue.(float64)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Complex64:
-		v, ok := ifcValue.(complex64)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Complex128:
-		v, ok := ifcValue.(complex128)
-		return reflect.ValueOf(v), ok
-
-	case reflect.Array:
-		return copySliceArray(value, structure)
-
-	case reflect.Slice:
+	case reflect.Array, reflect.Slice:
 		return copySliceArray(value, structure)
 
 	case reflect.Map:
 		return copyMap(value, structure)
+
+	case reflect.Pointer:
+		// TODO how to deal with this?
+		return reflect.Value{}, false
+
+	case reflect.Struct:
+		return copyStruct(value, structure)
 
 	default:
 		fmt.Printf("Unsupported kind %s\n", structure.Kind())
@@ -186,6 +165,23 @@ func copyMap(value reflect.Value, structure reflect.Type) (reflect.Value, bool) 
 	}
 
 	return newMap, true
+}
+
+func copyStruct(value reflect.Value, structure reflect.Type) (reflect.Value, bool) {
+	newStruct := reflect.New(structure).Elem()
+
+	vType := value.Type()
+	for i := 0; i < vType.NumField(); i++ {
+		vF := vType.Field(i)
+		if sF, ok := structure.FieldByName(vF.Name); ok {
+			if fieldValue, ok := destructure(value.Field(i), sF.Type); ok {
+				newField := newStruct.FieldByIndex(sF.Index)
+				newField.Set(fieldValue)
+			}
+		}
+	}
+
+	return newStruct, true
 }
 
 func nilOf[T any]() T {
