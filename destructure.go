@@ -19,18 +19,25 @@ func Destructure[T any](value any) T {
 }
 
 func destructure(value reflect.Value, structure reflect.Type) (reflect.Value, bool) {
-	if value.Kind() == reflect.Interface {
-		// Remove the layer of indirection for this interface value
-		if value.IsNil() {
-			return reflect.Value{}, false
-		}
-		value = value.Elem()
-	}
-
 	if value.Type().AssignableTo(structure) {
 		newVal := reflect.New(structure).Elem()
 		newVal.Set(value)
 		return newVal, true
+	}
+
+	if value.Kind() == reflect.Pointer && structure.Kind() != reflect.Pointer {
+		if value.IsNil() {
+			return reflect.Value{}, false
+		}
+		return destructure(value.Elem(), structure)
+	}
+
+	if value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return reflect.Value{}, false
+		}
+		// Remove the layer of indirection for this interface value
+		return destructure(value.Elem(), structure)
 	}
 
 	// Switch on the next expected kind
@@ -84,7 +91,17 @@ func destructure(value reflect.Value, structure reflect.Type) (reflect.Value, bo
 		return copyMap(value, structure)
 
 	case reflect.Pointer:
-		// TODO how to deal with this?
+		valueElem := value
+		structureElem := structure.Elem()
+		if value.Kind() == reflect.Pointer {
+			if value.IsNil() {
+				return reflect.Value{}, false
+			}
+			valueElem = value.Elem()
+		}
+		if newValue, ok := destructure(valueElem, structureElem); ok {
+			return newValue.Addr(), true
+		}
 		return reflect.Value{}, false
 
 	case reflect.Struct:
