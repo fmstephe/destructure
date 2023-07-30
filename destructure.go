@@ -19,16 +19,24 @@ func Destructure[T any](value any) T {
 }
 
 func destructure(value reflect.Value, structure reflect.Type) (reflect.Value, bool) {
-	if value.Type().AssignableTo(structure) {
-		newVal := reflect.New(structure).Elem()
-		newVal.Set(value)
-		return newVal, true
+	// unsafe-pointers are _always_ ignored
+	if structure.Kind() == reflect.UnsafePointer {
+		return reflect.Value{}, false
 	}
 
-	if value.Kind() == reflect.Pointer && structure.Kind() != reflect.Pointer {
+	/*
+		if value.Type().AssignableTo(structure) {
+			newVal := reflect.New(structure).Elem()
+			newVal.Set(value)
+			return newVal, true
+		}
+	*/
+
+	if value.Kind() == reflect.Pointer {
 		if value.IsNil() {
 			return reflect.Value{}, false
 		}
+		// Remove indirection for pointer value
 		return destructure(value.Elem(), structure)
 	}
 
@@ -36,7 +44,7 @@ func destructure(value reflect.Value, structure reflect.Type) (reflect.Value, bo
 		if value.IsNil() {
 			return reflect.Value{}, false
 		}
-		// Remove the layer of indirection for this interface value
+		// Remove indirection for interface value
 		return destructure(value.Elem(), structure)
 	}
 
@@ -90,22 +98,38 @@ func destructure(value reflect.Value, structure reflect.Type) (reflect.Value, bo
 	case reflect.Map:
 		return copyMap(value, structure)
 
-	case reflect.Pointer:
-		valueElem := value
-		structureElem := structure.Elem()
-		if value.Kind() == reflect.Pointer {
-			if value.IsNil() {
-				return reflect.Value{}, false
-			}
-			valueElem = value.Elem()
-		}
-		if newValue, ok := destructure(valueElem, structureElem); ok {
-			return newValue.Addr(), true
-		}
-		return reflect.Value{}, false
-
 	case reflect.Struct:
 		return copyStruct(value, structure)
+
+	case reflect.Chan:
+		chanLen := 0
+		if value.Kind() == reflect.Chan {
+			chanLen = value.Len()
+		}
+		newChan := reflect.MakeChan(structure, chanLen)
+		return newChan, true
+
+	case reflect.Pointer:
+		// TODO test me!
+		structureElem := structure.Elem()
+		newValue, ok := destructure(value, structureElem)
+		if !ok {
+			return reflect.Value{}, false
+		}
+		return newValue.Addr(), true
+
+	case reflect.Interface:
+		// TODO test me!
+		newInterface := reflect.New(structure)
+		structureElem := structure.Elem()
+		newValue, ok := destructure(value, structureElem)
+		if ok {
+			newInterface.Elem().Set(newValue)
+		}
+		return newInterface, true
+
+	case reflect.UnsafePointer:
+		panic("not reachable")
 
 	default:
 		fmt.Printf("Unsupported kind %s\n", structure.Kind())
@@ -137,7 +161,7 @@ func copySliceArray(value reflect.Value, structure reflect.Type) (reflect.Value,
 
 	newArray := reflect.New(structure).Elem()
 
-	// If we are copying a slice - grow it to the size needed for copy
+	// If we are copying a slice - grow it to the size needed for copying
 	if newArray.Kind() == reflect.Slice {
 		newArray = reflect.MakeSlice(structure, len(retypedValues), len(retypedValues))
 	}
